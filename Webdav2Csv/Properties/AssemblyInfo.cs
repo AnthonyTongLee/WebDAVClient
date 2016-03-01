@@ -5,12 +5,12 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following 
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("TestWebDAVClient")]
+[assembly: AssemblyTitle("Webdav2Csv")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("_")]
-[assembly: AssemblyProduct("TestWebDAVClient")]
-[assembly: AssemblyCopyright("Copyright © _ 2009")]
+[assembly: AssemblyCompany("")]
+[assembly: AssemblyProduct("Webdav2Csv")]
+[assembly: AssemblyCopyright("Copyright ©  2016")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 
@@ -20,7 +20,7 @@ using System.Runtime.InteropServices;
 [assembly: ComVisible(false)]
 
 // The following GUID is for the ID of the typelib if this project is exposed to COM
-[assembly: Guid("ff5c6b41-a110-4118-84a8-c056af006f0f")]
+[assembly: Guid("c8c3aee7-245a-4a67-b116-9c73e6abdbd3")]
 
 // Version information for an assembly consists of the following four values:
 //
