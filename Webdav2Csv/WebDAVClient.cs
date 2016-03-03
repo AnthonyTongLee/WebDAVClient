@@ -12,89 +12,53 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading.Tasks;
 using System.Web;
 using System.Xml;
+using Webdav2Csv;
 
 namespace net.kvdb.webdav {
+	/// <remarks>http://webdav.org/specs/rfc4918.html</remarks>
 	public class WebDAVClient {
-		private string server;
+		private readonly string server;
+		private string _basePath = "/";
 
-		/// <summary>
-		/// Specify the WebDAV hostname (required).
-		/// </summary>
-		public string Server
-		{
-			get { return server; }
-			set
-			{
-				value = value.TrimEnd('/');
-				server = value;
-			}
+
+
+		public WebDAVClient(string server) {
+			this.server = server.TrimEnd('/');
 		}
 
-		private string basePath = "/";
+
 
 		/// <summary>
 		/// Specify the path of a WebDAV directory to use as 'root' (default: /)
 		/// </summary>
 		public string BasePath
 		{
-			get { return basePath; }
+			get { return _basePath; }
 			set
 			{
 				value = value.Trim('/');
-				basePath = "/" + value + "/";
+				_basePath = "/" + value + "/";
 			}
 		}
 
-		private int? port;
+		public int? Port { get; set; }
 
-		/// <summary>
-		/// Specify an port (default: null = auto-detect)
-		/// </summary>
-		public int? Port
-		{
-			get { return port; }
-			set { port = value; }
-		}
+		public string User { get; set; }
 
-		private string user;
+		public string Password { get; set; }
 
-		/// <summary>
-		/// Specify a username (optional)
-		/// </summary>
-		public string User
-		{
-			get { return user; }
-			set { user = value; }
-		}
-
-		private string pass;
-
-		/// <summary>
-		/// Specify a password (optional)
-		/// </summary>
-		public string Pass
-		{
-			get { return pass; }
-			set { pass = value; }
-		}
-
-		private string domain;
-
-		public string Domain
-		{
-			get { return domain; }
-			set { domain = value; }
-		}
+		public string Domain { get; set; }
 
 
 
-		Uri getServerUrl(string path, bool appendTrailingSlash) {
-			var completePath = basePath;
+		Uri AsServerUrl(string path, bool appendTrailingSlash) {
+			var completePath = _basePath;
 			if (path != null) {
 				completePath += path.Trim('/');
 			}
@@ -103,8 +67,8 @@ namespace net.kvdb.webdav {
 				completePath += '/';
 			}
 
-			if (port.HasValue) {
-				return new Uri(server + ":" + port + completePath);
+			if (Port.HasValue) {
+				return new Uri(server + ":" + Port + completePath);
 			}
 			else {
 				return new Uri(server + completePath);
@@ -113,68 +77,20 @@ namespace net.kvdb.webdav {
 
 
 
-		/// <summary>
-		/// List files in the root directory
-		/// </summary>
-		public Task<ListResult> List() {
-			// Set default depth to 1. This would prevent recursion (default is infinity).
-			return List("/", 1);
-		}
+		public async Task<ListResult> List(string remoteFilePath = "/") {
+			var listUri = AsServerUrl(remoteFilePath, true);
 
+			byte[] content = Encoding.UTF8.GetBytes(
+				@"<?xml version=""1.0"" encoding=""utf-8"" ?>
+<propfind xmlns=""DAV:"">
+	<propname/>
+</propfind>
+"
+				);
 
+			var headers = new Dictionary<string, string> {{"Depth", "1,noroot"}};
 
-		/// <summary>
-		/// List files in the given directory
-		/// </summary>
-		/// <param name="path"></param>
-		public Task<ListResult> List(string path) {
-			// Set default depth to 1. This would prevent recursion.
-			return List(path, 1);
-		}
-
-
-
-		public class ListResult {
-			public HttpStatusCode statusCode;
-			public List<FileFolder> files = new List<FileFolder>();
-		}
-
-
-
-		public class FileFolder {
-			public string Href { get; set; }
-
-			public bool IsFolder { get; set; }
-
-			public string RelativePath { get; set; }
-		}
-
-
-
-		/// <summary>
-		/// List all files present on the server.
-		/// </summary>
-		/// <param name="remoteFilePath">List only files in this path</param>
-		/// <param name="depth">Recursion depth</param>
-		/// <returns>A list of files (entries without a trailing slash) and directories (entries with a trailing slash)</returns>
-		public async Task<ListResult> List(string remoteFilePath, int? depth) {
-			// Uri should end with a trailing slash
-			var listUri = getServerUrl(remoteFilePath, true);
-
-			// http://webdav.org/specs/rfc4918.html#METHOD_PROPFIND
-			var propfind = new StringBuilder();
-			propfind.Append("<?xml version=\"1.0\" encoding=\"utf-8\" ?>");
-			propfind.Append("<propfind xmlns=\"DAV:\">");
-			propfind.Append("  <propname/>");
-			propfind.Append("</propfind>");
-
-			// Depth header: http://webdav.org/specs/rfc4918.html#rfc.section.9.1.4
-			IDictionary<string, string> headers = new Dictionary<string, string>();
-			if (depth != null) {
-				headers.Add("Depth", depth.ToString());
-			}
-
-			var request = await OpenRequest(listUri, "PROPFIND", headers, Encoding.UTF8.GetBytes(propfind.ToString()), null);
+			var request = await OpenRequest(listUri, "PROPFIND", headers, content, null);
 
 			var result = new ListResult();
 			var response = (HttpWebResponse) await request.GetResponseAsync();
@@ -184,19 +100,32 @@ namespace net.kvdb.webdav {
 					var xml = new XmlDocument();
 					xml.Load(stream);
 
+					var normalisedListPath = listUri.ToString().TryRemoveTrailingSlash();
+
 					var xmlNsManager = new XmlNamespaceManager(xml.NameTable);
 					xmlNsManager.AddNamespace("d", "DAV:");
 
 					foreach (XmlNode responseNode in xml.DocumentElement.ChildNodes) {
 						var ff = new FileFolder();
-						ff.IsFolder = responseNode.SelectSingleNode("d:propstat/d:prop/d:isFolder", xmlNsManager) != null;
-						var href = responseNode.SelectSingleNode("d:href", xmlNsManager).InnerText;
-						ff.Href = href;
-						if (href.StartsWith(listUri.ToString(), StringComparison.InvariantCultureIgnoreCase)) {
-							ff.RelativePath = href.Substring(listUri.ToString().Length);
-							ff.RelativePath = HttpUtility.UrlDecode(ff.RelativePath);
+
+						var propNode = responseNode.SelectSingleNode("d:propstat/d:prop", xmlNsManager);
+						foreach (XmlElement propChildNode in propNode.ChildNodes) {
+							var prop = new Prop(propChildNode.Name, propChildNode.NamespaceURI, propChildNode.Prefix);
+							ff.PropNameToProp.Add(propChildNode.LocalName, prop);
 						}
-						
+
+						var href = responseNode.SelectSingleNode("d:href", xmlNsManager).InnerText;
+						ff.Href = HttpUtility.UrlDecode(href);
+
+						var normalisedPath = HttpUtility.UrlDecode(href) ?? string.Empty;
+						if (normalisedPath.StartsWith(normalisedListPath, StringComparison.InvariantCultureIgnoreCase)) {
+							var relativePath = normalisedPath.Substring(normalisedListPath.Length);
+							if (relativePath.StartsWith("/", StringComparison.InvariantCultureIgnoreCase)) {
+								relativePath = relativePath.Substring(1, relativePath.Length - 1);
+							}
+							ff.RelativePath = relativePath;
+						}
+
 						if (string.IsNullOrEmpty(ff.RelativePath)) {
 							// this folder
 							continue;
@@ -211,19 +140,66 @@ namespace net.kvdb.webdav {
 
 
 
-		/// <summary>
-		/// Upload a file to the server
-		/// </summary>
-		/// <param name="localFilePath">Local path and filename of the file to upload</param>
-		/// <param name="remoteFilePath">Destination path and filename of the file on the server</param>
-		/// <param name="state">Object to pass along with the callback</param>
-		public async Task<HttpStatusCode> Upload(string localFilePath, string remoteFilePath, object state = null) {
-			var fileInfo = new FileInfo(localFilePath);
+		public async Task<HttpStatusCode> Props(FileFolder fileFolder) {
+			byte[] content;
+			{
+				var s = new StringBuilder();
+				s.AppendLine("<?xml version=\"1.0\" encoding=\"utf-8\" ?>");
 
-			var uploadUri = getServerUrl(remoteFilePath, false);
-			var method = WebRequestMethods.Http.Put.ToString();
+				s.AppendLine("<D:propfind xmlns:D=\"DAV:\">");
+				s.Append("  <D:prop");
+				var namespaces = fileFolder.PropNameToProp.Values
+					.Where(v => v.NamespaceUri != "DAV:")
+					.Select(v => new {v.NamespaceAlias, v.NamespaceUri})
+					.Distinct();
+				foreach (var ns in namespaces) {
+					s.AppendFormat(" xmlns:{0}=\"{1}\"", ns.NamespaceAlias, HttpUtility.HtmlAttributeEncode(ns.NamespaceUri));
+				}
+				s.AppendLine(">");
 
-			var request = await OpenRequest(uploadUri, method, null, null, localFilePath);
+				foreach (var prop in fileFolder.PropNameToProp.Values) {
+					s.AppendFormat("    <{0} />", HttpUtility.HtmlEncode(prop.Name));
+					s.AppendLine();
+				}
+				s.AppendLine("</D:prop>");
+				s.AppendLine("</D:propfind>");
+				content = Encoding.UTF8.GetBytes(s.ToString());
+			}
+
+			var url = new Uri(fileFolder.Href);
+			var headers = new Dictionary<string, string> {{"Depth", "0"}};
+
+			var request = await OpenRequest(url, "PROPFIND", headers, content, null);
+
+			var response = (HttpWebResponse) await request.GetResponseAsync();
+			using (response) {
+				using (var stream = response.GetResponseStream()) {
+					var xml = new XmlDocument();
+					xml.Load(stream);
+
+					var xmlNsManager = new XmlNamespaceManager(xml.NameTable);
+					xmlNsManager.AddNamespace("d", "DAV:");
+
+					var propNode = xml.DocumentElement.SelectSingleNode("/d:multistatus/d:response/d:propstat/d:prop", xmlNsManager);
+					foreach (XmlNode propChildNode in propNode.ChildNodes) {
+						var rawValue = propChildNode.InnerXml;
+						var value = propChildNode.InnerText;
+						var name = propChildNode.LocalName;
+						var prop = fileFolder.PropNameToProp[name];
+						prop.Value = value;
+						prop.RawValue = rawValue;
+					}
+				}
+				return response.StatusCode;
+			}
+		}
+
+
+
+		public async Task<HttpStatusCode> Upload(string localFilePath, string remoteFilePath) {
+			var uploadUri = AsServerUrl(remoteFilePath, false);
+
+			var request = await OpenRequest(uploadUri, WebRequestMethods.Http.Put, null, null, localFilePath);
 
 			var response = (HttpWebResponse) await request.GetResponseAsync();
 			using (response) {
@@ -233,14 +209,9 @@ namespace net.kvdb.webdav {
 
 
 
-		/// <summary>
-		/// Download a file from the server
-		/// </summary>
-		/// <param name="remoteFilePath">Source path and filename of the file on the server</param>
-		/// <param name="localFilePath">Destination path and filename of the file to download on the local filesystem</param>
 		public async Task<int> Download(string remoteFilePath, string localFilePath) {
 			// Should not have a trailing slash.
-			var downloadUri = getServerUrl(remoteFilePath, false);
+			var downloadUri = AsServerUrl(remoteFilePath, false);
 			var method = WebRequestMethods.Http.Get.ToString();
 
 			var request = await OpenRequest(downloadUri, method, null, null, null);
@@ -266,17 +237,10 @@ namespace net.kvdb.webdav {
 
 
 
-		/// <summary>
-		/// Create a directory on the server
-		/// </summary>
-		/// <param name="remotePath">Destination path of the directory on the server</param>
 		public async Task<HttpStatusCode> CreateDir(string remotePath) {
-			// Should not have a trailing slash.
-			var dirUri = getServerUrl(remotePath, false);
+			var dirUri = AsServerUrl(remotePath, false);
 
-			var method = WebRequestMethods.Http.MkCol.ToString();
-
-			var request = await OpenRequest(dirUri, method, null, null, null);
+			var request = await OpenRequest(dirUri, WebRequestMethods.Http.MkCol, null, null, null);
 			var response = (HttpWebResponse) await request.GetResponseAsync();
 			using (response) {
 				return response.StatusCode;
@@ -285,12 +249,8 @@ namespace net.kvdb.webdav {
 
 
 
-		/// <summary>
-		/// Delete a file on the server
-		/// </summary>
-		/// <param name="remoteFilePath"></param>
 		public async Task<HttpStatusCode> Delete(string remoteFilePath) {
-			var delUri = getServerUrl(remoteFilePath, remoteFilePath.EndsWith("/"));
+			var delUri = AsServerUrl(remoteFilePath, remoteFilePath.EndsWith("/"));
 
 			var request = await OpenRequest(delUri, "DELETE", null, null, null);
 
@@ -302,10 +262,7 @@ namespace net.kvdb.webdav {
 
 
 
-		/// <summary>
-		/// Perform the WebDAV call and fire the callback when finished.
-		/// </summary>
-		async Task<HttpWebRequest> OpenRequest(Uri uri, string requestMethod, IDictionary<string, string> headers, byte[] content, string uploadFilePath) {
+		async Task<HttpWebRequest> OpenRequest(Uri uri, string requestMethod, IDictionary<string, string> headers = null, byte[] content = null, string uploadFilePath = null) {
 			var httpWebRequest = (HttpWebRequest) WebRequest.Create(uri);
 
 			/*
@@ -326,13 +283,13 @@ namespace net.kvdb.webdav {
 
 			// The server may use authentication
 			httpWebRequest.Credentials = CredentialCache.DefaultNetworkCredentials;
-			if (user != null && pass != null) {
+			if (User != null && Password != null) {
 				NetworkCredential networkCredential;
-				if (domain != null) {
-					networkCredential = new NetworkCredential(user, pass, domain);
+				if (Domain != null) {
+					networkCredential = new NetworkCredential(User, Password, Domain);
 				}
 				else {
-					networkCredential = new NetworkCredential(user, pass);
+					networkCredential = new NetworkCredential(User, Password);
 				}
 				httpWebRequest.Credentials = networkCredential;
 				// Send authentication along with first request.
