@@ -12,14 +12,16 @@ namespace Webdav2Csv {
 		public static void Main(string[] args) {
 			var client = new WebDAVClient(server: args[0]);
 
-			var csvConfig = new CsvConfiguration {Encoding = Encoding.UTF8};
+			var encoding = Encoding.UTF8;
+			var encodingNoBom = new UTF8Encoding(false);
+			var csvConfig = new CsvConfiguration {Encoding = encoding};
 
 			var tempFile = Path.GetTempFileName();
 			try {
 				using (var tmpStream = File.Open(tempFile, FileMode.Truncate, FileAccess.ReadWrite, FileShare.None)) {
 					// write contents to temporary file and remember the headers that were used
 					List<string> headers;
-					using (TextWriter textWriter = new StreamWriter(tmpStream, Encoding.UTF8, csvConfig.BufferSize, leaveOpen: true)) {
+					using (TextWriter textWriter = new StreamWriter(tmpStream, encodingNoBom, csvConfig.BufferSize, leaveOpen: true)) {
 						using (var csvWriter = new CsvWriter(textWriter, csvConfig)) {
 							headers = TraverseAndWrite(client, csvWriter, initialPath: args[1]);
 						}
@@ -27,7 +29,7 @@ namespace Webdav2Csv {
 
 					// write headers to output
 					using (var outStream = File.Open("out.csv", FileMode.Create, FileAccess.Write, FileShare.None)) {
-						using (TextWriter textWriter = new StreamWriter(outStream, Encoding.UTF8, csvConfig.BufferSize, leaveOpen: true)) {
+						using (TextWriter textWriter = new StreamWriter(outStream, encoding, csvConfig.BufferSize, leaveOpen: true)) {
 							using (var csvWriter = new CsvWriter(textWriter, csvConfig)) {
 								foreach (var header in headers) {
 									csvWriter.WriteField(header);
